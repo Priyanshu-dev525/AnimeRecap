@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AnimeRecap Router</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <div class="brand"><span class="logo">⛩</span> AnimeRecap <b>Router</b></div>
+    <nav id="tabs">
+      <button data-tab="connect" class="active">Connect</button>
+      <button data-tab="providers">Providers</button>
+      <button data-tab="combos">Combos</button>
+      <button data-tab="playground">Playground</button>
+      <button data-tab="logs">Logs</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- CONNECT -->
+    <section id="connect" class="tab active">
+      <div class="card">
+        <h2>Endpoint</h2>
+        <p class="muted">Any OpenAI-compatible client can use this router. Use a <b>combo</b> name (with automatic fallback) or <code>provider/model</code> as the model.</p>
+        <div class="row"><label>Base URL</label><code id="baseUrl" class="copy"></code></div>
+        <div class="row"><label>API keys</label><div id="apiKeys" class="stack"></div></div>
+        <div class="row"><label></label><button id="newKey" class="ghost">+ New router key</button>
+          <label class="inline"><input type="checkbox" id="requireKey" /> Require API key</label></div>
+        <div id="status" class="pills"></div>
+      </div>
+
+      <div class="grid2">
+        <div class="card">
+          <h2>Cline</h2>
+          <ol>
+            <li>In Cline settings, set <b>API Provider</b> to <b>OpenAI Compatible</b>.</li>
+            <li><b>Base URL</b>: <code class="copy baseUrlText"></code></li>
+            <li><b>API Key</b>: your router key above.</li>
+            <li><b>Model ID</b>: <code class="copy">free-coder</code> (or any model from the list).</li>
+          </ol>
+        </div>
+        <div class="card">
+          <h2>OpenCode</h2>
+          <p class="muted">Put this in <code>opencode.json</code> (project) or <code>~/.config/opencode/opencode.json</code>, then pick the model with <code>/models</code>.</p>
+          <pre id="opencodeCfg" class="copy"></pre>
+        </div>
+      </div>
+      <div class="card">
+        <h2>curl</h2>
+        <pre id="curlCfg" class="copy"></pre>
+      </div>
+    </section>
+
+    <!-- PROVIDERS -->
+    <section id="providers" class="tab">
+      <p class="muted">Add free API keys. Add several keys per provider and the router rotates between them, cooling down keys that hit rate limits.</p>
+      <div id="providerList" class="grid2"></div>
+      <div class="card">
+        <h2>Add a custom OpenAI-compatible provider</h2>
+        <form id="customForm" class="formrow">
+          <input name="id" placeholder="id (e.g. together)" required />
+          <input name="name" placeholder="Display name" />
+          <input name="baseUrl" placeholder="https://api.example.com/v1" required />
+          <label class="inline"><input type="checkbox" name="noKey" /> No key</label>
+          <button>Add</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- COMBOS -->
+    <section id="combos" class="tab">
+      <p class="muted">A combo is a model alias that tries its targets in order. If one fails (rate limit, outage, missing key) the router moves to the next one. Write one <code>provider/model</code> per line.</p>
+      <div id="comboList" class="grid2"></div>
+      <div class="card">
+        <h2>New combo</h2>
+        <form id="comboForm" class="stack">
+          <input name="name" placeholder="combo name (e.g. recap-long)" required />
+          <textarea name="targets" rows="5" placeholder="gemini/gemini-2.5-flash&#10;groq/llama-3.3-70b-versatile"></textarea>
+          <button>Create combo</button>
+        </form>
+      </div>
+      <datalist id="modelOptions"></datalist>
+    </section>
+
+    <!-- PLAYGROUND -->
+    <section id="playground" class="tab">
+      <div class="card">
+        <div class="formrow">
+          <select id="pgModel"></select>
+          <label class="inline"><input type="checkbox" id="pgStream" checked /> Stream</label>
+        </div>
+        <textarea id="pgSystem" rows="2" placeholder="System prompt (optional)">You are an anime recap writer. Write vivid, spoiler-aware episode recaps.</textarea>
+        <textarea id="pgPrompt" rows="5" placeholder="Message">Recap a short fictional anime episode where a rookie swordsman meets a fox spirit in 5 sentences.</textarea>
+        <button id="pgSend">Send</button>
+        <div id="pgMeta" class="muted"></div>
+        <pre id="pgOut" class="output"></pre>
+      </div>
+    </section>
+
+    <!-- LOGS -->
+    <section id="logs" class="tab">
+      <div class="card">
+        <h2>Usage by target</h2>
+        <table id="totals"></table>
+      </div>
+      <div class="card">
+        <h2>Recent requests <button id="refreshLogs" class="ghost small">Refresh</button></h2>
+        <table id="logTable"></table>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast"></div>
+  <script src="app.js" type="module"></script>
+</body>
+</html>

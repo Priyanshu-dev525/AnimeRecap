@@ -1,0 +1,15 @@
+{
+  "name": "anime-recap-router",
+  "version": "0.1.0",
+  "description": "OpenAI-compatible AI router (OmniRoute-style) that pools free model providers for Cline, OpenCode and the Anime Recap Studio.",
+  "type": "module",
+  "main": "src/server.js",
+  "bin": { "anime-router": "src/server.js" },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": { "node": ">=18.17" },
+  "license": "MIT"
+}
