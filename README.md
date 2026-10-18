@@ -1,8 +1,9 @@
 # AnimeRecap Router
 
-A self-hosted AI router in the style of OmniRoute. It pools **free model providers**
-behind one **OpenAI-compatible API**, so Cline, OpenCode, and later the
-**AnimeRecap Studio** can all use a single endpoint and key.
+A self-hosted AI router in the style of OmniRoute. It pools **free models** from
+**OpenCode Zen**, **Cline**, Gemini, Groq, OpenRouter and more behind one
+**OpenAI-compatible API**, which the **AnimeRecap Studio** (and any other app) can call
+with a single endpoint and key.
 
 ```
  Cline / OpenCode / AnimeRecap Studio
@@ -13,13 +14,16 @@ behind one **OpenAI-compatible API**, so Cline, OpenCode, and later the
      │   dashboard  :20128  │  rate-limit cooldown, usage logs
      └──────────────────────┘
        │      │      │      │      │
-    Gemini  Groq  OpenRouter Cerebras Mistral  GitHub Models  NVIDIA  Ollama  (+ custom)
+  OpenCode Zen  Cline  Gemini  Groq  OpenRouter  Cerebras  Mistral  GitHub  NVIDIA  Ollama  (+ custom)
 ```
 
 ## Features
 
 - **OpenAI-compatible**: `POST /v1/chat/completions` (streaming and non-streaming) and `GET /v1/models`.
-- **Free providers built in**: Google Gemini, Groq, OpenRouter (`:free` models), Cerebras, Mistral,
+- **OpenCode Zen and Cline as model sources**: use their free models through the router.
+  OpenCode Zen's free models work with **no key at all**, and if you are logged in to OpenCode
+  (`opencode auth login`) the router picks up that key automatically. Cline uses your Cline account API key.
+- **Other free providers built in**: Google Gemini, Groq, OpenRouter (`:free` models), Cerebras, Mistral,
   GitHub Models, NVIDIA NIM, and local Ollama. You can also add any other OpenAI-compatible endpoint.
 - **Combos**: model aliases with automatic fallback. For example, `anime-recap` tries Gemini, then
   OpenRouter, then Groq, and so on. It moves to the next model on rate limits, outages, or a missing key.
@@ -39,15 +43,31 @@ npm start
 
 Open http://localhost:20128. Then:
 
-1. **Providers** tab: paste a free API key for at least one provider. Gemini and Groq are the easiest
-   (follow the "Get key ↗" links). Click **Test** to check it works.
+1. **Providers** tab: **OpenCode Zen** is ready straight away (free, no key). Click **Test** on it.
+   For **Cline**, paste your key from app.cline.bot → Settings → API Keys. Optionally add more free keys
+   (Gemini, Groq, …) for extra capacity. Use **Fetch models** to see each provider's current free models.
 2. **Connect** tab: copy the base URL and router key.
 3. Connect your tools as shown below.
 
 Optional: copy `.env.example` to `.env` to set the port, an admin password, or provider keys through
 environment variables. Separate several keys with commas to rotate between them.
 
-## Connect Cline
+## Using OpenCode and Cline models
+
+| Provider     | Key                                                       | Model name in the router            |
+| ------------ | --------------------------------------------------------- | ----------------------------------- |
+| OpenCode Zen | none needed for free models (or your OpenCode login/Zen key) | `opencode/big-pickle`, `opencode/<model>-free` |
+| Cline        | app.cline.bot → Settings → API Keys                       | `cline/<provider>/<model>`          |
+
+Free model lineups change often. Click **Fetch models** on the provider card. Free ones are marked,
+then tick them and **Save**.
+
+## Also: point Cline / OpenCode at the router (optional)
+
+The router speaks the OpenAI API, so the Cline and OpenCode apps can also *use* it. That gives them
+fallback across every provider above.
+
+### Connect Cline
 
 Settings → **API Provider: OpenAI Compatible**
 
@@ -57,7 +77,7 @@ Settings → **API Provider: OpenAI Compatible**
 | API Key  | your router key (`sk-anime-…`)                          |
 | Model ID | `free-coder` (or `anime-recap`, `groq/llama-3.3-70b-versatile`, …) |
 
-## Connect OpenCode
+### Connect OpenCode
 
 `opencode.json` in your project, or `~/.config/opencode/opencode.json`. The dashboard generates this
 for you with your real key:
@@ -117,7 +137,7 @@ Default combos:
 | `DATA_DIR`       | `./data`    | where `config.json` lives                 |
 | `ADMIN_PASSWORD` | (none)      | protects the dashboard and `/api/*`       |
 | `ROUTER_API_KEY` | (none)      | extra client key accepted by `/v1/*`      |
-| `GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `CEREBRAS_API_KEY`, `MISTRAL_API_KEY`, `GITHUB_TOKEN`, `NVIDIA_API_KEY` | (none) | provider keys (comma-separated to rotate) |
+| `OPENCODE_API_KEY`, `CLINE_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `CEREBRAS_API_KEY`, `MISTRAL_API_KEY`, `GITHUB_TOKEN`, `NVIDIA_API_KEY` | (none) | provider keys (comma-separated to rotate) |
 
 ## Development
 

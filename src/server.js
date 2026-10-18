@@ -169,7 +169,9 @@ async function fetchUpstreamModels(store, id) {
     const list = json.data || json.models || [];
     const models = list.map((x) => {
       const mid = String(x.id || x.name || '').replace(/^models\//, '');
-      const free = x.pricing ? Number(x.pricing.prompt) === 0 && Number(x.pricing.completion) === 0 : undefined;
+      const free = x.pricing
+        ? Number(x.pricing.prompt) === 0 && Number(x.pricing.completion) === 0
+        : /(:free|-free)$|^big-pickle$/.test(mid) || undefined;
       return { id: mid, free };
     }).filter((x) => x.id);
     return { ok: true, models };

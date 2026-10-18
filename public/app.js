@@ -91,10 +91,12 @@ function renderProviders() {
   $('#providerList').innerHTML = state.providers.map((p) => {
     const cooling = state.cooldowns?.[p.id];
     const status = !p.enabled ? '<span class="pill">disabled</span>'
-      : p.ready ? `<span class="pill ok">ready</span>${cooling ? `<span class="pill warn">${cooling} key(s) cooling down</span>` : ''}`
+      : p.ready ? `<span class="pill ok">${p.anonymous && !p.keys.length && !p.envKeys.length && !p.localKeys.length ? 'ready · free, no key' : 'ready'}</span>${cooling ? `<span class="pill warn">${cooling} key(s) cooling down</span>` : ''}`
       : '<span class="pill warn">needs key</span>';
     const keys = p.keys.map((k, i) => `<div class="keyline"><code>${esc(k)}</code><button class="danger small" data-act="delkey" data-i="${i}">Remove</button></div>`).join('');
-    const envKeys = p.envKeys.map((k) => `<div class="keyline"><code>${esc(k)}</code><span class="muted small">from ${esc(p.env)}</span></div>`).join('');
+    const envKeys = p.envKeys.map((k) => `<div class="keyline"><code>${esc(k)}</code><span class="muted small">from ${esc(p.env)}</span></div>`).join('') +
+      p.localKeys.map((k) => `<div class="keyline"><code>${esc(k)}</code><span class="muted small">from your OpenCode login</span></div>`).join('') +
+      (p.anonymous && !p.keys.length && !p.envKeys.length && !p.localKeys.length ? '<div class="muted small">No key set: using free anonymous access.</div>' : '');
     return `<div class="card" data-pid="${esc(p.id)}">
       <div class="prov-head"><h2>${esc(p.name)} <span class="muted small">${esc(p.id)}</span></h2><div>${status}</div></div>
       ${p.note ? `<p class="muted small">${esc(p.note)} ${p.signup ? `<a href="${esc(p.signup)}" target="_blank" rel="noopener">Get key ↗</a>` : ''}</p>` : ''}

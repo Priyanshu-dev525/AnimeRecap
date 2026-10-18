@@ -12,6 +12,34 @@ export function maskKey(key) {
   return key.length <= 10 ? '••••' : `${key.slice(0, 6)}…${key.slice(-4)}`;
 }
 
+const CONFIG_VERSION = 2;
+
+// v2 added OpenCode Zen and Cline: add their targets to existing default combos.
+function mergeDefaultTargets(combos) {
+  for (const [name, targets] of Object.entries(DEFAULT_COMBOS)) {
+    const have = combos[name];
+    if (!have) continue;
+    const merged = [];
+    for (const t of targets) if (have.includes(t) || /^(opencode|cline)\//.test(t)) merged.push(t);
+    for (const t of have) if (!merged.includes(t)) merged.push(t);
+    combos[name] = merged;
+  }
+}
+
+// Key saved by `opencode auth login` (~/.local/share/opencode/auth.json).
+function readOpenCodeLogin(env) {
+  const home = env.HOME || env.USERPROFILE;
+  const dirs = [env.XDG_DATA_HOME, home && path.join(home, '.local', 'share'), env.LOCALAPPDATA].filter(Boolean);
+  for (const dir of dirs) {
+    try {
+      const auth = JSON.parse(fs.readFileSync(path.join(dir, 'opencode', 'auth.json'), 'utf8'));
+      const key = auth.opencode?.key;
+      if (typeof key === 'string' && key) return [key];
+    } catch {}
+  }
+  return [];
+}
+
 // Persistent config in <dataDir>/config.json. Keys from environment
 // variables are merged in at runtime and never written to disk.
 export class Store {
@@ -29,10 +57,12 @@ export class Store {
     } catch (err) {
       if (err.code !== 'ENOENT') throw new Error(`Cannot read ${this.file}: ${err.message}`);
     }
-    const fresh = !data.providers;
+    const fresh = !data.providers || (data.version || 1) < CONFIG_VERSION;
     data.apiKeys ??= [newRouterKey()];
     data.providers ??= {};
-    data.combos ??= { ...DEFAULT_COMBOS };
+    if (!data.combos) data.combos = structuredClone(DEFAULT_COMBOS);
+    else if ((data.version || 1) < 2) mergeDefaultTargets(data.combos);
+    data.version = CONFIG_VERSION;
     data.settings ??= { requireApiKey: true, timeoutMs: 120000 };
     for (const p of PRESETS) {
       data.providers[p.id] ??= {
@@ -68,10 +98,20 @@ export class Store {
     return raw ? raw.split(',').map((k) => k.trim()).filter(Boolean) : [];
   }
 
-  // All keys for a provider: saved ones first, then env ones.
+  localKeys(id) {
+    if (!presetFor(id)?.importOpenCodeLogin) return [];
+    const now = Date.now();
+    if (!this.loginCache || now - this.loginCache.at > 30_000) this.loginCache = { at: now, keys: readOpenCodeLogin(this.env) };
+    return this.loginCache.keys;
+  }
+
+  // All keys for a provider: saved, then env, then a local app login.
+  // Providers with an anonymous key fall back to it when nothing is set.
   providerKeys(id) {
     const saved = this.data.providers[id]?.keys || [];
-    return [...new Set([...saved, ...this.envKeys(id)])];
+    const keys = [...new Set([...saved, ...this.envKeys(id), ...this.localKeys(id)])];
+    const anon = presetFor(id)?.anonymousKey;
+    return keys.length || !anon ? keys : [anon];
   }
 
   isReady(id) {
@@ -86,7 +126,12 @@ export class Store {
 
   // Safe view for the dashboard: provider keys are masked.
   publicView() {
-    const providers = Object.keys(this.data.providers).map((id) => {
+    const order = (id) => {
+      const i = PRESETS.findIndex((p) => p.id === id);
+      return i < 0 ? PRESETS.length : i;
+    };
+    const ids = Object.keys(this.data.providers).sort((a, b) => order(a) - order(b));
+    const providers = ids.map((id) => {
       const p = this.provider(id);
       const preset = presetFor(id);
       return {
@@ -102,6 +147,8 @@ export class Store {
         models: p.models,
         keys: (p.keys || []).map(maskKey),
         envKeys: this.envKeys(id).map(maskKey),
+        localKeys: this.localKeys(id).map(maskKey),
+        anonymous: !!preset?.anonymousKey,
         ready: this.isReady(id),
       };
     });

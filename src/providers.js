@@ -5,6 +5,27 @@
 
 export const PRESETS = [
   {
+    id: 'opencode',
+    name: 'OpenCode Zen',
+    baseUrl: 'https://opencode.ai/zen/v1',
+    env: 'OPENCODE_API_KEY',
+    // OpenCode itself uses this anonymous key for free models when you are not logged in.
+    anonymousKey: 'public',
+    importOpenCodeLogin: true,
+    signup: 'https://opencode.ai/auth',
+    note: 'Free OpenCode Zen models work without a key (IP rate limited). Your OpenCode login is picked up automatically if found; you can also paste a Zen key.',
+    models: ['big-pickle', 'deepseek-v4-flash-free', 'qwen3.6-plus-free', 'minimax-m3-free'],
+  },
+  {
+    id: 'cline',
+    name: 'Cline',
+    baseUrl: 'https://api.cline.bot/api/v1',
+    env: 'CLINE_API_KEY',
+    signup: 'https://app.cline.bot',
+    note: 'Use your Cline account API key (app.cline.bot → Settings → API Keys). Cline offers some free models; use "Fetch models" to see them.',
+    models: ['minimax/minimax-m2.5'],
+  },
+  {
     id: 'gemini',
     name: 'Google Gemini',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
@@ -88,6 +109,8 @@ export const DEFAULT_COMBOS = {
   // Long-context, good-quality writers first; fast fallbacks after.
   'anime-recap': [
     'gemini/gemini-2.5-flash',
+    'opencode/big-pickle',
+    'cline/minimax/minimax-m2.5',
     'openrouter/deepseek/deepseek-chat-v3-0324:free',
     'groq/llama-3.3-70b-versatile',
     'cerebras/llama-3.3-70b',
@@ -96,6 +119,9 @@ export const DEFAULT_COMBOS = {
   ],
   // Coding agents (Cline / OpenCode).
   'free-coder': [
+    'opencode/big-pickle',
+    'opencode/qwen3.6-plus-free',
+    'cline/minimax/minimax-m2.5',
     'openrouter/qwen/qwen3-coder:free',
     'gemini/gemini-2.5-flash',
     'groq/openai/gpt-oss-120b',
@@ -103,6 +129,7 @@ export const DEFAULT_COMBOS = {
     'cerebras/gpt-oss-120b',
   ],
   'free-fast': [
+    'opencode/deepseek-v4-flash-free',
     'groq/llama-3.1-8b-instant',
     'cerebras/llama-3.3-70b',
     'gemini/gemini-2.5-flash-lite',

@@ -159,3 +159,26 @@ test('admin password is enforced when set', async () => {
   c.server.close();
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('OpenCode Zen uses the anonymous key when none is configured', async () => {
+  ctx.store.data.providers.opencode.baseUrl = upBase;
+  seen.length = 0;
+  const r = await chat({ model: 'opencode/big-pickle' });
+  assert.equal(r.status, 200);
+  assert.deepEqual(seen.map((s) => s.key), ['public']);
+});
+
+test('picks up an OpenCode login and migrates v1 configs', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'router-home-'));
+  fs.mkdirSync(path.join(home, '.local', 'share', 'opencode'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.local', 'share', 'opencode', 'auth.json'), JSON.stringify({ opencode: { type: 'api', key: 'zen-login-key' } }));
+  const dir = path.join(home, 'data');
+  fs.mkdirSync(dir);
+  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ apiKeys: ['k'], providers: {}, combos: { 'free-coder': ['groq/x', 'my/own'] } }));
+  const { store } = createServer({ dataDir: dir, env: { HOME: home } });
+  assert.deepEqual(store.providerKeys('opencode'), ['zen-login-key']);
+  assert.ok(store.data.combos['free-coder'].includes('opencode/big-pickle'));
+  assert.ok(store.data.combos['free-coder'].includes('my/own'), 'user targets kept');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8')).version, 2);
+  fs.rmSync(home, { recursive: true, force: true });
+});
