@@ -3,18 +3,20 @@ from __future__ import annotations
 
 import json
 import math
+import random
 import wave
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from fractions import Fraction
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 
 from .common import (Budget, Project, ToolError, compact_ids, fmt_time, log, read_json, segment_durations,
                      short_hash, write_json)
+from .config import find_logo, find_music, load_settings
 from .media import fit_filter, probe, run, run_ffmpeg
-from .script import beat_rows, script_key
-from .sheets import draw_tag, get_font, load_tile, wrap
+from .script import beat_rows, name_card_plan, name_pattern, script_key
+from .sheets import draw_tag, font_path, get_font, load_tile, wrap
 from .voice import SAMPLE_RATE, voice_durations, voice_wavs
 
 OUT_W, OUT_H = 1920, 1080
@@ -23,6 +25,10 @@ MIN_CLIP_SEC = 1.5      # fewer, longer clips when a beat lists more scenes than
 MIN_SPEED = 0.85        # a beat a little short of footage plays slightly slower instead of freezing
 EDGE_SEC = 0.02         # a hair inside each shot so rounding never flashes the neighbouring shot
 X264 = ["-c:v", "libx264", "-preset", "veryfast", "-tune", "animation", "-crf", "20", "-pix_fmt", "yuv420p"]
+CORNER = 0.03           # gap between the logo / name cards and the frame edge, as a fraction of the height
+CROSSFADE_SEC = 2.0     # between background music tracks
+RENDER_OPTIONS = ("logo", "logo_size", "logo_opacity", "music", "music_volume", "music_shuffle",
+                  "character_names", "name_seconds")
 
 
 def output_fps(proj: Project) -> Fraction:
@@ -204,7 +210,136 @@ def plan_beats(proj: Project, beats: list[dict], durations: list[float]) -> list
 
 # ---------------------------------------------------------------- rendering
 
-def _render_segment(proj: Project, plan: dict, frames: int, fps: Fraction, out: Path) -> None:
+# ---------------------------------------------------------------- overlays: channel logo and name cards
+
+def _prepare_logo(proj: Project, source: Path, settings: dict) -> dict:
+    """Scale the channel logo for the bottom-right corner and bake in its opacity."""
+    stat = source.stat()
+    key = short_hash(source, stat.st_size, int(stat.st_mtime), settings["logo_size"], settings["logo_opacity"])
+    out = proj.path("render", f"logo_{key}.png")
+    with Image.open(source) as im:
+        logo = im.convert("RGBA")
+    width = round(OUT_W * settings["logo_size"])
+    height = round(logo.height * width / logo.width)
+    if height > OUT_H * 0.25:
+        height = round(OUT_H * 0.25)
+        width = round(logo.width * height / logo.height)
+    if not out.exists():
+        logo = logo.resize((width, height), Image.LANCZOS)
+        if settings["logo_opacity"] < 1:
+            logo.putalpha(logo.getchannel("A").point(lambda a: int(a * settings["logo_opacity"])))
+        out.parent.mkdir(parents=True, exist_ok=True)
+        logo.save(out)
+    margin = round(OUT_H * CORNER)
+    return {"path": str(out), "w": width, "h": height, "x": OUT_W - width - margin, "y": OUT_H - height - margin}
+
+
+def _name_card(proj: Project, name: str) -> dict:
+    """The character's name in bold white letters with a black outline and soft shadow (transparent PNG)."""
+    size = round(OUT_H * 0.065)
+    stroke = max(3, size // 11)
+    pad = 12
+    font = get_font(size, heavy=True)
+    left, top, right, bottom = ImageDraw.Draw(Image.new("RGBA", (1, 1))).textbbox((0, 0), name, font=font, stroke_width=stroke)
+    w, h = math.ceil(right - left) + 2 * pad, math.ceil(bottom - top) + 2 * pad
+    out = proj.path("render", f"name_{short_hash(name, size, font_path(True))}.png")
+    if not out.exists():
+        origin = (pad - left, pad - top)
+        shadow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        ImageDraw.Draw(shadow).text((origin[0] + 3, origin[1] + 4), name, font=font, fill=(0, 0, 0, 180),
+                                    stroke_width=stroke, stroke_fill=(0, 0, 0, 180))
+        card = shadow.filter(ImageFilter.GaussianBlur(3))
+        ImageDraw.Draw(card).text(origin, name, font=font, fill=(255, 255, 255, 255),
+                                  stroke_width=stroke, stroke_fill=(0, 0, 0, 255))
+        out.parent.mkdir(parents=True, exist_ok=True)
+        card.save(out)
+    return {"path": str(out), "w": w, "h": h}
+
+
+def _card_window(text: str, item: dict, plan: dict, voice_sec: float, seg_sec: float, show: float) -> tuple[float, float]:
+    """When a name card shows inside its beat: on the given scene's clip, else when the narration says the name."""
+    start = None
+    if item.get("scene") is not None:
+        clip = next((c for c in plan["clips"] if c["scene"] == item["scene"]), None)
+        if clip:
+            start = clip["at"] + 0.3
+    if start is None:
+        match = name_pattern(item["name"]).search(text)
+        start = voice_sec * len(text[:match.start()].split()) / max(1, len(text.split())) - 0.15 if match else 0.5
+    show = min(show, max(0.6, seg_sec - 0.2))
+    start = max(0.0, min(start, seg_sec - 0.1 - show))
+    return round(start, 3), round(start + show, 3)
+
+
+def _place_cards(proj: Project, beats: list[dict], plans: list[dict], spoken: list[float], seg_secs: list[float],
+                 settings: dict, logo: dict | None) -> list[list[dict]]:
+    """Name cards per beat, right-aligned at the bottom right (above the logo); overlapping cards stack upward."""
+    out: list[list[dict]] = [[] for _ in beats]
+    if not settings["character_names"]:
+        return out
+    margin, gap = round(OUT_H * CORNER), round(OUT_H * 0.012)
+    bottom = logo["y"] - gap if logo else OUT_H - margin
+    for i, items in name_card_plan(proj, beats).items():
+        for item in items:
+            card = _name_card(proj, item["name"])
+            start, end = _card_window(beats[i]["text"], item, plans[i], spoken[i], seg_secs[i], settings["name_seconds"])
+            slot = sum(1 for c in out[i] if c["start"] < end and start < c["end"])
+            out[i].append({**card, "name": item["name"], "start": start, "end": end,
+                           "x": OUT_W - margin - card["w"], "y": bottom - card["h"] - slot * (card["h"] + gap)})
+    return out
+
+
+# ---------------------------------------------------------------- background music
+
+def _music_inputs(proj: Project, tracks: list[Path], total: float, shuffle: bool) -> tuple[list[str], int]:
+    """ffmpeg inputs that cover `total` seconds: one track loops; several play in turn with crossfades."""
+    usable = []
+    for track in tracks:
+        try:
+            seconds = float((probe(track).get("format") or {}).get("duration") or 0)
+        except ToolError:
+            seconds = 0.0
+        if seconds > 2 * CROSSFADE_SEC + 1:
+            usable.append((track, seconds))
+    if shuffle:
+        random.Random(proj.id).shuffle(usable)
+    if not usable:
+        return [], 0
+    if len(usable) == 1:
+        return ["-stream_loop", "-1", "-i", str(usable[0][0])], 1
+    args: list[str] = []
+    count, covered = 0, 0.0
+    while covered < total + 1 and count < 200:
+        for track, seconds in usable:
+            args += ["-i", str(track)]
+            covered += seconds - (CROSSFADE_SEC if count else 0)
+            count += 1
+            if covered >= total + 1 or count >= 200:
+                break
+    return args, count
+
+
+def _audio_graph(music_count: int, total: float, volume: float) -> str:
+    """Narration (input 1) in stereo at -14 LUFS, with the music (inputs 2...) normalised and mixed under it."""
+    voice = "[1:a]pan=stereo|c0=c0|c1=c0,loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000"
+    if not music_count or volume <= 0:
+        return voice + "[a]"
+    fmt = "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
+    parts = [f"{voice},{fmt}[voice]"] + [f"[{2 + k}:a]{fmt}[m{k}]" for k in range(music_count)]
+    current = "[m0]"
+    for k in range(1, music_count):
+        parts.append(f"{current}[m{k}]acrossfade=d={CROSSFADE_SEC}:c1=tri:c2=tri[x{k}]")
+        current = f"[x{k}]"
+    parts.append(f"{current}atrim=0:{total:.3f},asetpts=PTS-STARTPTS,loudnorm=I=-14:TP=-2:LRA=11,{fmt},"
+                 f"volume={volume:.3f},afade=t=in:st=0:d=2,afade=t=out:st={max(0.0, total - 3):.3f}:d=3[music]")
+    parts.append("[voice][music]amerge=inputs=2,pan=stereo|c0=c0+c2|c1=c1+c3,alimiter=limit=0.95[a]")
+    return ";".join(parts)
+
+
+# ---------------------------------------------------------------- rendering
+
+def _render_segment(proj: Project, plan: dict, frames: int, fps: Fraction, out: Path,
+                    logo: dict | None = None, cards: list[dict] = ()) -> None:
     inputs, chains, labels = [], [], []
     for clip in plan["clips"]:
         first = round(clip["at"] * fps)
@@ -220,16 +355,30 @@ def _render_segment(proj: Project, plan: dict, frames: int, fps: Fraction, out: 
         chains.append(f"[{k}:{video['video_index']}]{fit_filter(OUT_W, OUT_H, video['sar'])},{slow}fps={fps},"
                       f"trim=end_frame={count},setpts=PTS-STARTPTS[c{k}]")
         labels.append(f"[c{k}]")
+    seconds = float(frames / fps)
     if labels:
         # tpad holds the last frame if the clips come up short; -frames:v cuts to the exact length.
-        graph = ";".join(chains + [f"{''.join(labels)}concat=n={len(labels)}:v=1:a=0,format=yuv420p,"
-                                   f"tpad=stop_mode=clone:stop_duration={float(frames / fps) + 1:.3f}[v]"])
+        chains.append(f"{''.join(labels)}concat=n={len(labels)}:v=1:a=0,format=yuv420p,"
+                      f"tpad=stop_mode=clone:stop_duration={seconds + 1:.3f}[base]")
     else:
         inputs = ["-f", "lavfi", "-i", f"color=c=black:s={OUT_W}x{OUT_H}:r={fps}"]
-        graph = "[0:v]format=yuv420p[v]"
+        chains = ["[0:v]format=yuv420p[base]"]
+    current, index = "[base]", max(1, len(labels))
+    if logo:  # a still image: overlay repeats its only frame for the whole segment
+        inputs += ["-i", logo["path"]]
+        chains.append(f"{current}[{index}:v]overlay=x={logo['x']}:y={logo['y']}[lg]")
+        current, index = "[lg]", index + 1
+    for j, card in enumerate(cards):
+        inputs += ["-loop", "1", "-framerate", str(fps), "-t", f"{seconds:.3f}", "-i", card["path"]]
+        fade_out = max(card["start"] + 0.25, card["end"] - 0.35)
+        chains.append(f"[{index}:v]format=rgba,fade=t=in:st={card['start']:.3f}:d=0.25:alpha=1,"
+                      f"fade=t=out:st={fade_out:.3f}:d=0.35:alpha=1[nc{j}]")
+        chains.append(f"{current}[nc{j}]overlay=x={card['x']}:y={card['y']}[ov{j}]")
+        current, index = f"[ov{j}]", index + 1
+    chains.append(f"{current}format=yuv420p[v]")
     tmp = out.with_name(out.stem + ".part.mp4")
-    run(["ffmpeg", "-nostdin", "-v", "error", "-y", *inputs, "-filter_complex", graph, "-map", "[v]",
-         "-frames:v", str(frames), "-an", *X264, "-r", str(fps), tmp])
+    run(["ffmpeg", "-nostdin", "-v", "error", "-y", *inputs, "-filter_complex", ";".join(chains), "-map", "[v]",
+         "-frames:v", str(frames), "-an", "-sn", "-dn", *X264, "-r", str(fps), tmp])
     tmp.replace(out)
 
 
@@ -275,22 +424,35 @@ def render_video(args: dict) -> dict:
         t += seconds
         bounds.append(round(t * fps))
     frames = [b - a for a, b in zip(bounds, bounds[1:])]
-    plans = plan_beats(proj, beats, [float(f / fps) for f in frames])
+    seg_secs = [float(f / fps) for f in frames]
+    plans = plan_beats(proj, beats, seg_secs)
+    settings = load_settings({k: args[k] for k in RENDER_OPTIONS if k in args})
+    notes: list[str] = []
+    logo_source, logo_note = find_logo(settings)
+    logo = _prepare_logo(proj, logo_source, settings) if logo_source else None
+    if logo_note.startswith("missing"):
+        notes.append(f"Channel logo {logo_note}; rendering without it.")
+    tracks, music_note = find_music(settings)
+    if music_note.startswith("missing"):
+        notes.append(f"Background music {music_note}; rendering without it.")
+    cards = _place_cards(proj, beats, plans, spoken, seg_secs, settings, logo)
 
     render_dir = proj.path("render")
     render_dir.mkdir(parents=True, exist_ok=True)
     segments, jobs = [], []
-    for plan, count in zip(plans, frames):
-        key = short_hash(json.dumps(plan["clips"]), count, fps, X264, OUT_W, OUT_H)
+    for plan, count, beat_cards in zip(plans, frames, cards):
+        key = short_hash(json.dumps(plan["clips"]), count, fps, X264, OUT_W, OUT_H,
+                         json.dumps(logo), json.dumps(beat_cards))
         path = render_dir / f"seg_{plan['beat']:03d}_{key}.mp4"
         segments.append(path)
         if not path.exists():
-            jobs.append((plan, count, path))
+            jobs.append((plan, count, path, beat_cards))
     log(f"render: {len(jobs)} of {len(segments)} beat segments to encode")
     budget = Budget()
     finished = True
     with ThreadPoolExecutor(max_workers=2) as pool:
-        futures = [pool.submit(_render_segment, proj, plan, count, fps, path) for plan, count, path in jobs]
+        futures = [pool.submit(_render_segment, proj, plan, count, fps, path, logo, beat_cards)
+                   for plan, count, path, beat_cards in jobs]
         for done, future in enumerate(as_completed(futures), 1):
             future.result()
             if done % 5 == 0 or done == len(futures):
@@ -316,10 +478,17 @@ def render_video(args: dict) -> dict:
     final = proj.path("output", "recap.mp4")
     final.parent.mkdir(parents=True, exist_ok=True)
     tmp = final.with_name("recap.part.mp4")
-    run_ffmpeg(["-f", "concat", "-safe", "0", "-i", listing, "-i", narration, "-map", "0:v:0", "-map", "1:a:0",
-                "-c:v", "copy", "-af", "loudnorm=I=-14:TP=-1.5:LRA=11", "-ar", "48000", "-c:a", "aac", "-b:a", "192k",
-                "-movflags", "+faststart", tmp], duration=float(total), label="final mux")
+    music_args, music_count = _music_inputs(proj, tracks, total, settings["music_shuffle"]) if tracks else ([], 0)
+    if tracks and not music_count:
+        notes.append("Background music files are unreadable or under 5 s; rendering without music.")
+    # No subtitle or data streams: the recap never carries subtitles or captions.
+    run_ffmpeg(["-f", "concat", "-safe", "0", "-i", listing, "-i", narration, *music_args,
+                "-filter_complex", _audio_graph(music_count, total, settings["music_volume"]),
+                "-map", "0:v:0", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+                "-sn", "-dn", "-map_chapters", "-1", "-movflags", "+faststart", tmp],
+               duration=total, label="final mux")
     tmp.replace(final)
+    used_music = [Path(arg).name for flag, arg in zip(music_args, music_args[1:]) if flag == "-i"]
 
     timeline_beats = []
     for n, (beat, plan) in enumerate(zip(beats, plans), 1):
@@ -328,13 +497,17 @@ def render_video(args: dict) -> dict:
             "beat": n, "start": round(start, 3), "end": round(end, 3), "start_tc": fmt_time(start),
             "voice_sec": spoken[n - 1], "text": beat["text"], "scene_ids": beat["scene_ids"],
             "clips": [{**c, "video_at": round(start + c["at"], 3)} for c in plan["clips"]],
+            "names": [{"name": c["name"], "start": round(start + c["start"], 3), "end": round(start + c["end"], 3)}
+                      for c in cards[n - 1]],
             "freeze_sec": plan["freeze"], "notes": plan["notes"] + plan["warnings"],
         })
     timeline_path = proj.path("output", "timeline.json")
     write_json(timeline_path, {"project_id": proj.id, "video": str(final), "duration": round(total, 3),
-                               "fps": str(fps), "script_key": script_key(beats), "beats": timeline_beats})
+                               "fps": str(fps), "script_key": script_key(beats), "logo": logo_note if logo else None,
+                               "music": list(dict.fromkeys(used_music)), "music_volume": settings["music_volume"] if used_music else None,
+                               "subtitles": "none", "beats": timeline_beats})
     actual = float((probe(final).get("format") or {}).get("duration") or 0)
-    warnings = [f"Beat {p['beat']}: {w}" for p in plans for w in p["warnings"]]
+    warnings = notes + [f"Beat {p['beat']}: {w}" for p in plans for w in p["warnings"]]
     if abs(actual - total) > 0.5:
         warnings.append(f"Video is {actual:.1f}s but the timeline expects {total:.1f}s.")
     return {
@@ -345,6 +518,12 @@ def render_video(args: dict) -> dict:
         "fps": str(fps),
         "beats": len(beats),
         "clips": sum(len(p["clips"]) for p in plans),
+        "logo": logo_note if logo else f"none ({logo_note})",
+        "music": (f"{len(set(used_music))} track(s) at volume {settings['music_volume']:g}" if used_music
+                  else f"none ({music_note})"),
+        "name_cards": [f"{c['name']} at {fmt_time(float(bounds[i] / fps) + c['start'])}"
+                       for i, beat_cards in enumerate(cards) for c in beat_cards],
+        "subtitles": "none",
         "timeline": str(timeline_path),
         "warnings": warnings,
         "next": "get_preview_sheet (first_beat=1, 9, 17, ...) and fix wrong clips with update_beats, then render again.",
@@ -369,14 +548,15 @@ def get_preview_sheet(args: dict) -> dict:
         raise ToolError(f"first_beat must be between 1 and {len(beats)}.")
     timeline = read_json(proj.path("output", "timeline.json"), None)
     if timeline and timeline.get("script_key") == script_key(beats):
-        rows = [{"beat": b["beat"], "start": b["start"], "clips": b["clips"], "freeze": b["freeze_sec"], "notes": b["notes"]}
-                for b in timeline["beats"]]
+        rows = [{"beat": b["beat"], "start": b["start"], "clips": b["clips"], "freeze": b["freeze_sec"],
+                 "notes": b["notes"], "names": [c["name"] for c in b.get("names", [])]} for b in timeline["beats"]]
         source = "rendered video"
     else:
         timing, how = beat_rows(proj, beats)
         plans = plan_beats(proj, beats, [r["end"] - r["start"] for r in timing])
+        names = name_card_plan(proj, beats) if load_settings()["character_names"] else {}
         rows = [{"beat": p["beat"], "start": r["start"], "clips": p["clips"], "freeze": p["freeze"],
-                 "notes": p["notes"] + p["warnings"]}
+                 "notes": p["notes"] + p["warnings"], "names": [c["name"] for c in names.get(p["beat"] - 1, [])]}
                 for p, r in zip(plans, timing)]
         source = f"plan before rendering ({how})"
     rows = rows[first - 1:first - 1 + count]
@@ -394,6 +574,8 @@ def get_preview_sheet(args: dict) -> dict:
         beat = beats[row["beat"] - 1]
         draw.rectangle([4, y, width - 4, y + row_h], fill=(36, 36, 36))
         draw.text((12, y + 4), f"Beat {row['beat']}  {fmt_time(row['start'])}", font=head_font, fill=(255, 235, 59))
+        if row["names"]:
+            draw_tag(draw, (190, y + 4), "NAME: " + ", ".join(row["names"]), tag_font, fill=(255, 255, 255), bg=(20, 90, 160))
         for j, line in enumerate(wrap(draw, beat["text"], text_font, PANEL_W - 24, max_lines=4)):
             draw.text((12, y + 28 + j * 19), line, font=text_font, fill=(225, 225, 225))
         clips = row["clips"]
@@ -414,6 +596,7 @@ def get_preview_sheet(args: dict) -> dict:
             "beat": row["beat"], "time": fmt_time(row["start"]), "text": beat["text"],
             "shows": [{"scene": c["scene"], "sec": c["duration"],
                        "description": proj.scene(c["scene"]).get("description") or ""} for c in clips],
+            "names": row["names"],
             "notes": row["notes"],
         })
     out = proj.path("sheets", f"preview_{rows[0]['beat']:03d}_{rows[-1]['beat']:03d}.jpg")

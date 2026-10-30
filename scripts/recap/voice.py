@@ -20,12 +20,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from .common import PAUSE_SEC, Budget, Project, ToolError, log, short_hash, word_count, write_json
+from .config import load_settings
 from .engine import target_minutes
 from .media import run
 
 FISH_URL = "https://api.fish.audio/v1/tts"
-DEFAULT_FISH_MODEL = "s1"
-DEFAULT_EDGE_VOICE = "en-US-GuyNeural"
 SAMPLE_RATE = 48000
 
 
@@ -53,8 +52,7 @@ def voice_wavs(proj: Project) -> dict[int, Path]:
 
 # ---------------------------------------------------------------- providers
 
-def fish_tts(text: str, voice_id: str, model: str, out: Path) -> None:
-    key = os.environ.get("FISH_API_KEY", "")
+def fish_tts(text: str, voice_id: str, model: str, key: str, out: Path) -> None:
     body = json.dumps({"text": text, "reference_id": voice_id, "format": "mp3"}).encode("utf-8")
     headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json", "model": model}
     url = os.environ.get("FISH_API_URL") or FISH_URL
@@ -70,7 +68,8 @@ def fish_tts(text: str, voice_id: str, model: str, out: Path) -> None:
         except urllib.error.HTTPError as exc:
             detail = exc.read()[:300].decode("utf-8", "replace")
             if exc.code in (401, 403):
-                raise ToolError(f"Fish Audio rejected the request (HTTP {exc.code}): {detail}", hint="Check FISH_API_KEY.")
+                raise ToolError(f"Fish Audio rejected the request (HTTP {exc.code}): {detail}",
+                                hint="Check your Fish Audio API key (configure fish_api_key, or FISH_API_KEY).")
             if exc.code == 402:
                 raise ToolError("Fish Audio: out of credits (HTTP 402).",
                                 hint="Top up your Fish Audio balance, or use provider 'edge' for a free test voice.")
@@ -78,7 +77,7 @@ def fish_tts(text: str, voice_id: str, model: str, out: Path) -> None:
                 time.sleep(2 ** attempt * 2)
                 continue
             raise ToolError(f"Fish Audio error (HTTP {exc.code}): {detail}",
-                            hint="Check FISH_VOICE_ID (your voice's reference_id) and FISH_MODEL.")
+                            hint="Check your cloned voice id (fish_voice_id) and fish_model.")
         except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
             if attempt < 3:
                 time.sleep(2 ** attempt * 2)
@@ -166,21 +165,25 @@ def generate_voice(args: dict) -> dict:
     beats = script["beats"]
     if not beats:
         raise ToolError("There is no script yet.", hint="Write it with save_script first.")
-    has_fish = bool(os.environ.get("FISH_API_KEY") and (args.get("voice_id") or os.environ.get("FISH_VOICE_ID")))
+    settings = load_settings()
+    api_key = settings["fish_api_key"]
+    has_fish = bool(api_key and (args.get("voice_id") or settings["fish_voice_id"]))
     provider = str(args.get("provider") or ("fish" if has_fish else "edge")).lower()
     if provider == "fish":
-        voice_id = args.get("voice_id") or os.environ.get("FISH_VOICE_ID")
-        model = os.environ.get("FISH_MODEL") or DEFAULT_FISH_MODEL
-        if not os.environ.get("FISH_API_KEY"):
-            raise ToolError("FISH_API_KEY is not set.",
-                            hint="Set FISH_API_KEY (from fish.audio), or use provider 'edge' for a free test voice.")
+        voice_id = args.get("voice_id") or settings["fish_voice_id"]
+        model = settings["fish_model"] or "s1"
+        if not api_key:
+            raise ToolError("No Fish Audio API key.",
+                            hint="Run configure with fish_api_key (from fish.audio), or set FISH_API_KEY. "
+                                 "Use provider 'edge' for a free test voice.")
         if not voice_id:
-            raise ToolError("No Fish Audio voice.", hint="Pass voice_id or set FISH_VOICE_ID to your cloned voice's reference_id.")
+            raise ToolError("No cloned voice.", hint="Run configure with fish_voice_id (your voice's id on fish.audio), "
+                                                     "pass voice_id, or set FISH_VOICE_ID.")
 
         def synth(text: str, out: Path) -> None:
-            fish_tts(text, voice_id, model, out)
+            fish_tts(text, voice_id, model, api_key, out)
     elif provider == "edge":
-        voice_id = args.get("voice_id") or os.environ.get("EDGE_VOICE") or DEFAULT_EDGE_VOICE
+        voice_id = args.get("voice_id") or settings["edge_voice"]
         model = "edge"
         if importlib.util.find_spec("edge_tts") is None:
             raise ToolError("edge-tts is not installed.", hint="pip install edge-tts")

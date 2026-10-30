@@ -1,61 +1,121 @@
+<div align="center">
+
 # animerecap
 
-An AI agent skill that turns anime episode files into a finished YouTube recap video of about 20 minutes. It works in any coding AI app: Claude Code, Codex, Gemini CLI, OpenCode or Cursor.
+**Turn anime episodes into finished YouTube recap videos with one command in your AI coding app.**
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
+![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)
+![Requires ffmpeg](https://img.shields.io/badge/requires-ffmpeg-green.svg)
+![Agent skill](https://img.shields.io/badge/agent%20skill-Claude%20Code%20%7C%20Codex%20%7C%20Gemini%20CLI%20%7C%20OpenCode%20%7C%20Cursor-purple.svg)
 
 ```
-/animerecap ~/Videos/ep01.mkv ~/Videos/ep02.mkv 25
+/animerecap ~/Videos/ep01.mkv ~/Videos/ep02.mkv
 ```
 
-From that one command, the AI app produces:
+</div>
 
-- **`recap.mp4`**: 1920x1080, with clips matched to the narration, the original audio muted, and a voice-over in your cloned Fish Audio voice. It is written in a fixed, calm storyteller style.
-- **`thumbnail.jpg`**: 1280x720, edited from a real frame of the episode. It adds a thick yellow arrow, a bold label, an optional green "+99" badge and an optional speech bubble.
-- **`publish.txt`**: the title, description and hashtags.
-- **`script.txt`, `script_table.md` and `timeline.json`**: the narration, with real timestamps.
+animerecap is an AI agent skill. You give it episode files, and your AI app (Claude Code, Codex, Gemini CLI, OpenCode, Cursor, ...) produces a recap of about 20 minutes per episode. The narration is in a fixed, calm storyteller style and uses **your own cloned voice**, with **your channel logo**, **your background music** and character name cards. It also makes the thumbnail, title and hashtags.
 
-There is no website and no separate vision API. The AI in your app looks at frame sheets and writes the script itself. A Python script (`scripts/recap.py`) does all the mechanical work: scene detection, frames, voice, rendering and thumbnail editing.
+There is no website and no extra vision API. The AI in your app looks at the frames and writes the script itself. A Python script does all the mechanical work with ffmpeg and Pillow.
+
+## Features
+
+- **The AI watches every scene.** Scene detection and keyframe contact sheets let it describe every shot, then write the recap in order, scene by scene.
+- **A fixed storyteller style:** simple English, third person, present tense, reasons for everything, and the same closing line every time. You can copy your own reference script's voice.
+- **Your cloned voice:** a Fish Audio voice-over in your own cloned voice, with free Edge TTS for test runs.
+- **Your channel logo** at the bottom right of the whole video.
+- **Character name cards:** the first time a character is introduced, the name appears in bold white letters at the bottom right.
+- **Background music** from your own tracks, mixed quietly under the narration. A folder of tracks plays in turn, with crossfades.
+- **Matched clips:** each sentence shows the scenes it talks about. Clips are at most about 5 s each, and no scene is ever reused. The original audio is muted.
+- **No subtitles:** the video has no subtitle tracks and no captions.
+- **A thumbnail from a real frame:** a thick yellow arrow, a bold label, a green "+99" badge and a speech bubble. It never generates new art.
+- **Ready to upload:** a 1920x1080 MP4, a 1280x720 thumbnail, and the title, description and hashtags.
+- **Resumable:** long steps stop safely before your app's command timeout and continue where they stopped. Editing one beat re-voices and re-renders only that beat.
 
 ## How it works
 
-```
-inspect_video → suggest_length → analyze_video → contact sheets + descriptions (20 scenes at a time)
-→ notes → script in chunks (checked for style, pacing, order and footage) → timestamped script table
-→ generate_voice → render_video → preview sheets + fixes → thumbnail → title/hashtags
-```
-
-`SKILL.md` holds the full instructions the AI follows, including the narration style rules.
-
-## Requirements
-
-- Python 3.10+
-- ffmpeg and ffprobe on your `PATH` (`brew install ffmpeg`, `sudo apt install ffmpeg`, or `winget install ffmpeg`)
-- `pip install -r requirements.txt` (Pillow and edge-tts)
-- An AI app with a model that can view images
-- For the real voice, a [Fish Audio](https://fish.audio) API key and a cloned voice. Edge TTS is free and works for testing.
-
-## Install
-
-### Claude Code
-
-```bash
-git clone https://github.com/Priyanshu-dev525/AnimeRecap ~/.claude/skills/animerecap
+```mermaid
+flowchart LR
+    A[Episode files] --> B["analyze_video<br/>scenes, keyframes, dialogue"]
+    B --> C["AI looks at contact sheets<br/>and describes every scene"]
+    C --> D["AI writes the script<br/>in the storyteller style"]
+    D --> E["generate_voice<br/>your cloned voice"]
+    E --> F["render_video<br/>clips, music, logo, name cards"]
+    F --> G["AI checks the preview<br/>sheets and fixes clips"]
+    G --> H["thumbnail, title,<br/>hashtags"]
 ```
 
-```bash
-pip install -r ~/.claude/skills/animerecap/requirements.txt
-```
+All the instructions the AI follows, including the style rules, are in [`SKILL.md`](SKILL.md). Every mechanical step is a tool in [`scripts/recap.py`](scripts/recap.py).
 
-Or copy this folder to `~/.claude/skills/animerecap` yourself. Then set the environment variables (see Configuration) and restart Claude Code. Run it like this:
+## Quick start (Claude Code)
 
-```
-/animerecap "/path/to/episode 01.mkv"
-```
+1. Install the requirements: Python 3.10+, ffmpeg, and the Python packages.
 
-You can also just ask: "make an anime recap of ~/Videos/ep01.mkv".
+   ```bash
+   brew install ffmpeg            # macOS (Linux: sudo apt install ffmpeg, Windows: winget install ffmpeg)
+   ```
 
-### Other AI apps (Codex, Gemini CLI, OpenCode, Cursor, ...)
+2. Install the skill.
 
-1. Clone the repo anywhere, for example `~/animerecap`, then install the requirements:
+   ```bash
+   git clone https://github.com/Priyanshu-dev525/AnimeRecap ~/.claude/skills/animerecap
+   ```
+
+   ```bash
+   pip install -r ~/.claude/skills/animerecap/requirements.txt
+   ```
+
+3. Make it yours. Put `logo.png` and your music into `~/.claude/skills/animerecap/assets/`. Then just tell Claude your Fish Audio key and cloned voice id (see the next section).
+4. Restart Claude Code, then run:
+
+   ```
+   /animerecap "/path/to/episode 01.mkv"
+   ```
+
+## Make it yours
+
+### Your voice: API key and cloned voice
+
+1. Create an API key in your [Fish Audio](https://fish.audio) account.
+2. Clone your voice there, and copy the voice's id. This is the `reference_id` the API uses.
+3. Give both to animerecap in any one of these ways:
+   - **Tell the AI:** "My Fish Audio API key is ... and my voice id is ...". It saves them with the `configure` tool.
+   - **Edit the config file:** copy [`config.example.json`](config.example.json) to `config.json` and fill in `fish_api_key` and `fish_voice_id`.
+   - **Use environment variables:** set `FISH_API_KEY` and `FISH_VOICE_ID`. These override `config.json`.
+
+`config.json` is git-ignored and readable only by you, so your key is never committed. Without a key, animerecap uses the free Edge TTS voice, which is meant for testing.
+
+### Your channel logo
+
+Put your logo at `assets/logo.png` (or `.webp` / `.jpg`), or tell the AI where it is. It appears at the bottom right of every frame. A PNG with a transparent background looks best.
+
+Adjust it with `logo_size` (its width as a fraction of the video, default `0.12`) and `logo_opacity` (default `0.9`).
+
+### Background music
+
+Put tracks in `assets/music/` (`.mp3`, `.m4a`, `.wav`, `.flac`, `.ogg`, `.opus`), or point `music` at any file or folder. animerecap handles the mixing:
+
+- The tracks are loudness-matched, crossfaded and looped to fit the video.
+- They are mixed under the voice at `music_volume`, which defaults to `0.12`, about 18 dB quieter than the narration.
+- The music fades in at the start and out at the end.
+
+Set `music_shuffle: true` to shuffle a folder.
+
+### Character name cards
+
+When the story first introduces a character, the name appears in bold white letters at the bottom right, above the logo, for `name_seconds` (default 3 s). The AI handles this: it saves the character list while it studies the episode, and it marks each introduction in the script.
+
+Turn the name cards off with `character_names: false`.
+
+### Your style
+
+- **`references/sample_recap.txt`:** paste your reference recap script here. The AI reads it before writing, and copies its voice.
+- **`references/thumbnail_reference.webp`:** add a thumbnail whose style you want matched.
+
+## Other AI apps (Codex, Gemini CLI, OpenCode, Cursor, ...)
+
+1. Clone the repo anywhere, then install the requirements:
 
    ```bash
    git clone https://github.com/Priyanshu-dev525/AnimeRecap ~/animerecap
@@ -67,53 +127,70 @@ You can also just ask: "make an anime recap of ~/Videos/ep01.mkv".
 
 2. Paste the contents of `SKILL.md` into the app's agent or system prompt. That is `AGENTS.md` for Codex and OpenCode, `GEMINI.md` for Gemini CLI, or a rule in `.cursor/rules/` for Cursor.
 3. Replace `<skill-dir>` in the pasted text with the clone path (`~/animerecap`).
-4. Ask: `/animerecap /path/to/ep01.mkv`, or "recap this anime episode: /path/to/ep01.mkv".
+4. Ask: `/animerecap /path/to/ep01.mkv`, or "make an anime recap of /path/to/ep01.mkv".
 
-If your app sandboxes the filesystem, set `RECAP_HOME` to a folder it is allowed to write to. Without it, projects go to `~/animerecap_projects`, or to `./animerecap_projects` when the home folder is not writable.
+Your app's model must be able to view images. If the app sandboxes the filesystem, set `RECAP_HOME` to a folder it can write to.
+
+## Usage examples
+
+```
+/animerecap ~/anime/ep01.mkv
+/animerecap ~/anime/ep01.mkv ~/anime/ep02.mkv ~/anime/ep03.mkv 40
+Use ~/Pictures/my-logo.png as my channel logo and ~/Music/bgm as background music.
+Make the music quieter and render again.
+Render this one without music.
+```
+
+The length is 22 × √episodes minutes by default (at most 90), and never more than 95% of the usable footage. A trailing number sets the minutes.
 
 ## Configuration
 
-| Variable | Required | Meaning |
-|---|---|---|
-| `FISH_API_KEY` | for the real voice | Your Fish Audio API key |
-| `FISH_VOICE_ID` | for the real voice | The `reference_id` of your cloned Fish Audio voice |
-| `FISH_MODEL` | no | Sent as the `model` header (default `s1`); use the model name from Fish Audio's docs |
-| `EDGE_VOICE` | no | The Edge TTS voice for free test runs (default `en-US-GuyNeural`) |
-| `RECAP_HOME` | no | The folder where projects are stored (default `~/animerecap_projects`) |
-| `FISH_API_URL` | no | Another endpoint, for example a self-hosted Fish Speech server (default `https://api.fish.audio/v1/tts`) |
-| `WHISPER_MODEL` | no | The Whisper model to use when an episode has no English subtitles (default `small`) |
-| `RECAP_FONT` | no | A heavy `.ttf` or `.otf` for thumbnail text; you can also drop a font into `scripts/recap/fonts/` |
-| `RECAP_TIME_BUDGET` | no | The seconds a long tool runs before stopping cleanly to resume later (default `540`) |
+| Setting (`config.json`) | Environment variable | Default | Meaning |
+|---|---|---|---|
+| `fish_api_key` | `FISH_API_KEY` | | Your Fish Audio API key |
+| `fish_voice_id` | `FISH_VOICE_ID` | | Your cloned voice's id (`reference_id`) |
+| `fish_model` | `FISH_MODEL` | `s1` | The Fish Audio model, sent as the `model` header |
+| `edge_voice` | `EDGE_VOICE` | `en-US-GuyNeural` | The free test voice |
+| `logo` | `RECAP_LOGO` | `assets/logo.*` | The channel logo image, or `"none"` |
+| `logo_size` / `logo_opacity` | | `0.12` / `0.9` | The logo's width as a fraction of the video, and its opacity |
+| `music` | `RECAP_MUSIC` | `assets/music/` | A music file or folder, or `"none"` |
+| `music_volume` | | `0.12` | The music's level relative to the voice (0-1) |
+| `music_shuffle` | | `false` | Shuffle a folder of tracks |
+| `character_names` / `name_seconds` | | `true` / `3` | Show name cards, and for how many seconds |
 
-For example, on macOS or Linux add these lines to `~/.zshrc` or `~/.bashrc`:
+Other environment variables:
+
+- **`RECAP_HOME`:** the projects folder (default `~/animerecap_projects`)
+- **`RECAP_CONFIG`:** another location for the config file
+- **`FISH_API_URL`:** another endpoint, for example a self-hosted Fish Speech server
+- **`WHISPER_MODEL`:** the model used when an episode has no English subtitles
+- **`RECAP_FONT`:** a heavy font for the name cards and thumbnails
+- **`RECAP_TIME_BUDGET`:** how many seconds a long tool runs before it stops cleanly (default 540)
+
+Tool arguments override environment variables, and environment variables override `config.json`.
+
+## Output
+
+Everything for a project is in `RECAP_HOME/<project_id>/output/`:
+
+| File | Contents |
+|---|---|
+| `recap.mp4` | 1920x1080 H.264 + AAC stereo: matched clips, narration, music, logo, name cards, no subtitles |
+| `thumbnail.jpg` | 1280x720, edited from a real frame |
+| `publish.txt` | The title, description and hashtags, ready to paste |
+| `script.txt` / `script_table.md` | The narration, plain and as a timestamped table |
+| `timeline.json` | Every beat, clip and name card, with real timestamps |
+
+## Tools
+
+The AI calls these for you. You can also run them yourself. Each prints JSON, and tools that make a picture also print `IMAGE: <path>`.
 
 ```bash
-export FISH_API_KEY="your-key"
-export FISH_VOICE_ID="your-voice-reference-id"
+python scripts/recap.py tools                 # list every tool
 ```
 
-The API key is only read from the environment. Never commit it.
-
-## Subtitles
-
-For the script, the AI needs the English dialogue. `analyze_video` looks for it in this order:
-
-1. An English sidecar file next to the video, such as `ep01.srt`, `ep01.en.srt` or `ep01.eng.ass`.
-2. The best embedded English text track. Full dialogue tracks win over "Signs & Songs" tracks. Karaoke, sign and song lines are dropped.
-3. Optionally, Whisper (`pip install faster-whisper`), which translates Japanese audio to English.
-
-Image-based subtitles (PGS or VobSub) cannot be read. Without any dialogue, the AI works from the pictures alone.
-
-## Using the tools by hand
-
-Every step is a plain command that prints JSON:
-
 ```bash
-python scripts/recap.py tools                      # list every tool
-```
-
-```bash
-python scripts/recap.py help make_thumbnail        # details and examples for one tool
+python scripts/recap.py help configure        # details for one tool
 ```
 
 ```bash
@@ -121,79 +198,37 @@ python scripts/recap.py check_setup
 ```
 
 ```bash
-python scripts/recap.py inspect_video '{"path": "/videos/ep01.mkv"}'
+python scripts/recap.py configure '{"music_volume": 0.1}'
 ```
-
-```bash
-python scripts/recap.py analyze_video '{"paths": ["/videos/ep01.mkv"]}'
-```
-
-```bash
-python scripts/recap.py get_contact_sheet '{"project_id": "ep01-1a2b3c", "first_scene": 1}'
-```
-
-```bash
-python scripts/recap.py save_script /path/to/beats.json   # a JSON file works anywhere JSON does
-```
-
-The argument can be:
-
-- a JSON object
-- a path to a `.json` file
-- `key=value` pairs (a value may be JSON, or `@file.json`)
-- `-` to read the JSON from stdin
-
-Tools that produce a picture also print `IMAGE: <path>`.
 
 | Tool | What it does |
 |---|---|
-| `inspect_video` | Duration, audio tracks, subtitle tracks and chapters (ffprobe) |
-| `suggest_length` | 22 × √episodes minutes, at most 90, never above 95% of the usable footage; about 190 words per minute |
-| `analyze_video` | Scene detection (`select='gt(scene,0.3)'`): shots over 10 s are split, shots under 1 s merged. One keyframe per scene, plus the English dialogue |
-| `get_contact_sheet` / `get_scene_detail` | A grid of keyframes, each tile labelled with its scene id and time, or one large frame |
-| `save_descriptions` | Saves what each scene shows, with an importance of 1-5. `credits=true` keeps OP/ED and title cards out of the video |
-| `set_content_range` | Uses only part of an episode, to cut "previously on" recaps or previews |
-| `save_notes` / `get_notes` / `get_scenes_text` | Story notes, a progress status, and the scenes as text |
-| `save_script` / `update_beats` | Saves narration beats. Checks word counts, pacing, style, scene order, skipped scenes and footage |
-| `generate_voice` | One mp3 per beat (Fish Audio or Edge), cached by text |
-| `render_video` | Cuts clips per beat (at most about 5 s each, never reusing a scene). A beat short of footage borrows nearby scenes or plays up to 15% slower. Mutes the original audio, adds the narration, and writes `timeline.json` |
-| `get_preview_sheet` / `get_timeline` | Shows what each beat displays, and the real MM:SS timestamps |
-| `get_thumbnail_candidates` / `make_thumbnail` | The best frames, then the thumbnail: arrow, label, badge and bubble on a real frame |
-| `save_publish_info` | Saves the title, description and hashtags |
-| `list_projects` / `check_setup` | Existing projects, and an environment check |
+| `check_setup` / `configure` | Checks the environment; saves your key, cloned voice, logo, music and name-card options |
+| `inspect_video` / `suggest_length` | Tracks, subtitles and chapters; the target length (190 spoken words per minute) |
+| `analyze_video` | Scene detection (`gt(scene,0.3)`), keyframes, and English dialogue from subtitles or Whisper |
+| `get_contact_sheet` / `get_scene_detail` | Grids of keyframes labelled with scene ids and times; one large frame |
+| `save_descriptions` / `set_content_range` | What each scene shows (credits are never used); trimming recaps and previews |
+| `save_notes` / `get_notes` / `get_scenes_text` | Story notes and character names, a progress status, and the scenes as text |
+| `save_script` / `update_beats` | Narration beats, checked for style, pacing, scene order and footage |
+| `generate_voice` | One mp3 per beat with Fish Audio or Edge, cached by text |
+| `render_video` | Clips, narration, music, logo, name cards, and `timeline.json` |
+| `get_preview_sheet` / `get_timeline` | What each beat shows; real MM:SS timestamps |
+| `get_thumbnail_candidates` / `make_thumbnail` | The best frames, then the thumbnail |
+| `save_publish_info` / `list_projects` | The title, description and hashtags; the list of projects |
 
-Long tools (`analyze_video`, `generate_voice`, `render_video`) cache everything they finish. If one is interrupted or times out, run the same command again and it continues. Changing one beat later re-voices and re-renders only that beat.
+## Troubleshooting
 
-## Project files
-
-Each project lives in `RECAP_HOME/<project_id>/`. The deliverables are in `output/`:
-
-```
-output/recap.mp4          the video
-output/thumbnail.jpg      1280x720 thumbnail
-output/publish.txt        title, description, hashtags
-output/script.txt         narration text
-output/script_table.md    timestamped script table
-output/timeline.json      every beat and clip with real timestamps
-```
-
-## Style references
-
-- **`references/sample_recap.txt`**: the reference narration script. The AI reads it before writing and copies its voice. Paste your own script here.
-- **`references/thumbnail_reference.webp`**: the thumbnail style to match. Add your own image here.
-
-## A free test run
-
-Without a Fish Audio key, `generate_voice` uses Edge TTS. You can also ask for it explicitly:
-
-```bash
-python scripts/recap.py generate_voice '{"project_id": "<id>", "provider": "edge"}'
-```
+- **Run `check_setup` first.** It shows what is missing, and which of your settings are active.
+- **A long step times out:** run the same command again. Finished work is cached.
+- **No English dialogue:** put an `.srt` file next to the episode, or `pip install faster-whisper`. Image-based subtitles (PGS) cannot be read.
+- **Fish Audio errors:** 401 means a wrong API key, 402 means you are out of credits, and other errors usually mean the voice id or `fish_model` needs checking.
+- **The music is too loud or too quiet:** set `music_volume` (try `0.08` or `0.18`), then render again. Only the final mix is redone.
+- **Hardcoded subtitles in your clips:** they are burned into the source picture. Use raw or soft-subbed releases.
 
 ## Copyright
 
-The video clips in a recap are copyrighted footage owned by the anime's studio or licensor. Uploading recaps can bring Content ID claims, demonetization or strikes. Make sure your use is allowed (for example, fair use commentary in your country) before you publish. This tool never generates new art: thumbnails are edited real frames.
+The clips in a recap are copyrighted footage owned by the anime's studio or licensor. Uploading recaps can bring Content ID claims, demonetization or strikes. Only use music you have the rights to (royalty-free, or licensed for YouTube). Make sure your use is allowed before you publish. animerecap never generates new art: thumbnails are edited real frames.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+[MIT](LICENSE)

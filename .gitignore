@@ -3,3 +3,11 @@ __pycache__/
 .DS_Store
 .env
 animerecap_projects/
+
+# Personal settings and channel assets (API key, logo, music) stay on your machine.
+config.json
+assets/*
+!assets/README.md
+!assets/music/
+assets/music/*
+!assets/music/.gitkeep

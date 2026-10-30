@@ -14,7 +14,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from . import media, subtitles
+from . import config, media, subtitles
 from .common import (CLOSING_LINE, REFERENCES_DIR, WORDS_PER_MINUTE, Budget, Project, ToolError, candidate_homes,
                      existing_file, find_project_dir, fmt_time, log, now_iso, parse_time, read_json, recap_home,
                      short_hash, slugify, word_count, write_json)
@@ -61,14 +61,13 @@ def check_setup(args: dict) -> dict:
     checks["pillow"] = {"ok": True, "version": PIL.__version__}
     edge = importlib.util.find_spec("edge_tts") is not None
     checks["edge_tts"] = {"ok": edge, "note": None if edge else "pip install edge-tts (free test voice)"}
-    key, voice = os.environ.get("FISH_API_KEY"), os.environ.get("FISH_VOICE_ID")
-    checks["fish_audio"] = {
-        "ok": bool(key and voice),
-        "FISH_API_KEY": "set" if key else "missing",
-        "FISH_VOICE_ID": voice or "missing",
-        "FISH_MODEL": os.environ.get("FISH_MODEL") or "s1 (default)",
-    }
-    checks["edge_voice"] = os.environ.get("EDGE_VOICE") or "en-US-GuyNeural (default)"
+    try:
+        settings = config.load_settings()
+        checks["settings"] = config.describe(settings)
+        fish = bool(settings["fish_api_key"] and settings["fish_voice_id"])
+    except ToolError as exc:
+        checks["settings"] = {"error": str(exc), "hint": exc.hint}
+        fish = False
     checks["whisper"] = {"available": subtitles.whisper_engine(), "note": "optional: only used when a video has no English subtitles"}
     checks["fonts"] = {"thumbnail": font_path(True), "labels": font_path(False)}
     try:
@@ -87,10 +86,11 @@ def check_setup(args: dict) -> dict:
         "thumbnail_reference.webp": "ok" if (REFERENCES_DIR / "thumbnail_reference.webp").is_file() else "missing (optional)",
     }
     ready = all(checks[k]["ok"] for k in ("python", "ffmpeg", "ffprobe", "projects_folder"))
-    provider = "fish" if checks["fish_audio"]["ok"] else ("edge" if edge else None)
+    provider = "fish" if fish else ("edge" if edge else None)
     result = {"ready": ready, "voice_provider": provider, "checks": checks}
     if provider is None:
-        result["hint"] = "No voice available: set FISH_API_KEY and FISH_VOICE_ID, or pip install edge-tts."
+        result["hint"] = ("No voice available: run configure with fish_api_key and fish_voice_id "
+                          "(your cloned voice), or pip install edge-tts.")
     return result
 
 
@@ -523,13 +523,29 @@ def set_content_range(args: dict) -> dict:
 def save_notes(args: dict) -> dict:
     proj = Project.from_args(args)
     notes = str(args.get("notes") or "").strip()
-    if not notes:
-        raise ToolError("notes is required (plain text).")
-    path = proj.path("notes.md")
-    if args.get("append") and path.exists():
-        notes = path.read_text(encoding="utf-8").rstrip() + "\n\n" + notes
-    path.write_text(notes + "\n", encoding="utf-8")
-    return {"saved_chars": len(notes), "path": str(path)}
+    characters = args.get("characters")
+    if not notes and characters is None:
+        raise ToolError("notes (plain text) or characters (a list of names) is required.")
+    result: dict = {}
+    if notes:
+        path = proj.path("notes.md")
+        if args.get("append") and path.exists():
+            notes = path.read_text(encoding="utf-8").rstrip() + "\n\n" + notes
+        path.write_text(notes + "\n", encoding="utf-8")
+        result.update(saved_chars=len(notes), path=str(path))
+    if characters is not None:
+        if isinstance(characters, str):
+            characters = re.split(r"[,\n]", characters)
+        names: list[str] = []
+        for raw in characters:
+            name = " ".join(str(raw).split())
+            if name and name.lower() not in {n.lower() for n in names}:
+                names.append(name)
+        proj.meta["characters"] = names
+        proj.save_meta()
+        result["characters"] = names
+        result["note"] = "Each name gets a bold name card the first time the script mentions it."
+    return result
 
 
 def project_status(proj: Project) -> dict:
@@ -573,6 +589,7 @@ def get_notes(args: dict) -> dict:
     proj = Project.from_args(args)
     path = proj.path("notes.md")
     return {"notes": path.read_text(encoding="utf-8") if path.exists() else "",
+            "characters": proj.meta.get("characters") or [],
             "status": project_status(proj)}
 
 

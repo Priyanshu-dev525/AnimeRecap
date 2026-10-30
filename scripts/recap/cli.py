@@ -24,7 +24,11 @@ Tools print JSON; 'IMAGE: <path>' lines are pictures to open and look at.
 # (name, module, function, arguments, description)
 TOOLS = [
     ("check_setup", "engine", "check_setup", "",
-     "Check ffmpeg, Python packages, voice settings, fonts and the projects folder."),
+     "Check ffmpeg, Python packages, your settings (voice, logo, music), fonts and the projects folder."),
+    ("configure", "config", "configure",
+     "fish_api_key?, fish_voice_id?, fish_model?, edge_voice?, logo?, logo_size?, logo_opacity?, music?, "
+     "music_volume?, music_shuffle?, character_names?, name_seconds?",
+     "Save your Fish Audio key + cloned voice, channel logo, background music and name-card options."),
     ("inspect_video", "engine", "inspect_video", "path",
      "Duration, audio tracks, subtitle tracks and chapters of one video (ffprobe)."),
     ("suggest_length", "engine", "suggest_length", "episodes, paths?, requested_minutes?, project_id?",
@@ -40,22 +44,22 @@ TOOLS = [
      "Save what scenes show. credits=true marks OP/ED/title/next-episode cards (never used)."),
     ("set_content_range", "engine", "set_content_range", "project_id, start_sec, end_sec, episode=1, clear?",
      "Use only footage between these times of an episode (cuts recaps and previews)."),
-    ("save_notes", "engine", "save_notes", "project_id, notes, append=false",
-     "Save story notes: names, world rules, plot by scene range."),
+    ("save_notes", "engine", "save_notes", "project_id, notes?, characters?[], append=false",
+     "Save story notes (names, world rules, plot by scene range) and the character names for name cards."),
     ("get_notes", "engine", "get_notes", "project_id",
      "Notes plus a progress summary with the next step (use it to resume)."),
     ("get_scenes_text", "engine", "get_scenes_text", "project_id, first_scene=1, count=40",
      "Scenes as text: time, importance, description, dialogue."),
     ("save_script", "script", "save_script",
-     "project_id, beats[{text, scene_ids[] | scene_range[a,b]}], append=false, target_minutes?",
+     "project_id, beats[{text, scene_ids[] | scene_range[a,b], introduce?[]}], append=false, target_minutes?",
      "Save narration beats; returns words, estimated minutes, progress and warnings."),
     ("update_beats", "script", "update_beats",
-     "project_id, updates[{beat, text?, scene_ids? | scene_range?, delete?}]",
+     "project_id, updates[{beat, text?, scene_ids? | scene_range?, introduce?, delete?}]",
      "Fix single beats (wrong clips, wording) without resending the whole script."),
     ("generate_voice", "voice", "generate_voice", "project_id, provider=fish|edge, voice_id?, workers=3",
      "One mp3 per beat (cached by text), stores each duration."),
-    ("render_video", "render", "render_video", "project_id",
-     "1920x1080 MP4: clips per beat, original audio muted, narration added; writes timeline.json."),
+    ("render_video", "render", "render_video", "project_id, music?, music_volume?, logo?, character_names?",
+     "1920x1080 MP4: clips per beat, original audio muted, narration + music, logo, name cards, no subtitles."),
     ("get_preview_sheet", "render", "get_preview_sheet", "project_id, first_beat=1, count=8",
      "IMAGE: what each beat shows, to verify and fix scene_ids."),
     ("get_timeline", "script", "get_timeline", "project_id",
@@ -72,9 +76,23 @@ TOOLS = [
 ]
 
 DETAILS = {
+    "configure": """Saves to config.json in the skill folder (git-ignored). No arguments: show the current settings.
+  fish_api_key, fish_voice_id    your Fish Audio API key and cloned voice id (reference_id)
+  fish_model, edge_voice         TTS model header (default s1); free Edge test voice (default en-US-GuyNeural)
+  logo                           channel logo image shown at the bottom right ("none" to turn off)
+  logo_size, logo_opacity        width as a fraction of the video (0.12); 0.1-1 (0.9)
+  music, music_volume            background music file or folder ("none" to turn off); 0-1 relative to the voice (0.12)
+  music_shuffle                  shuffle a folder of tracks (false)
+  character_names, name_seconds  bold white name at the bottom right when a character is introduced (true); seconds (3)
+A null or empty value resets a setting. Environment variables (FISH_API_KEY, FISH_VOICE_ID, ...) override the file.""",
     "save_script": """beats: [{"text": "60-100 words", "scene_ids": [12, 13, 15]}, {"text": "...", "scene_range": [16, 22]}]
 scene_ids are shown in the order given (the order the words mention things), about one per 3-4 spoken seconds.
+introduce: names first introduced in this beat, e.g. ["Ren"] or [{"name": "Ren", "scene": 14}] (card times to that clip).
+Names saved with save_notes characters get a card automatically at their first mention.
 First call: append=false (optionally target_minutes). Later chunks: append=true.""",
+    "render_video": """Uses your settings: logo (bottom right), music (mixed under the narration), name cards (bottom right,
+above the logo). Override one render with music / music_volume / logo / character_names, e.g. {"music": "none"}.
+The video never contains subtitles or captions.""",
     "update_beats": """updates: [{"beat": 7, "scene_ids": [40, 41, 44]}, {"beat": 9, "text": "new text"}, {"beat": 12, "delete": true}]""",
     "make_thumbnail": """Coordinates are [x, y] fractions of the 1280x720 result (0,0 = top-left). grid=true overlays a guide.
 elements (max 4):

@@ -1,0 +1,15 @@
+{
+  "_comment": "Copy this file to config.json (git-ignored) and fill in what you use, or ask the AI to run the configure tool. Relative paths are relative to this folder. Empty logo/music = use assets/logo.png and assets/music/ when present.",
+  "fish_api_key": "",
+  "fish_voice_id": "",
+  "fish_model": "s1",
+  "edge_voice": "en-US-GuyNeural",
+  "logo": "",
+  "logo_size": 0.12,
+  "logo_opacity": 0.9,
+  "music": "",
+  "music_volume": 0.12,
+  "music_shuffle": false,
+  "character_names": true,
+  "name_seconds": 3.0
+}

@@ -7,6 +7,7 @@ import re
 
 from .common import (CLOSING_LINE, PAUSE_SEC, TAIL_SEC, WORDS_PER_MINUTE, Project, ToolError, compact_ids, fmt_time,
                      read_json, segment_durations, short_hash, speech_seconds, word_count, write_json)
+from .config import load_settings
 from .engine import target_minutes
 
 MAX_CLIP_SEC = 5.0
@@ -26,7 +27,61 @@ def _scenes(ids) -> str:
 
 
 def script_key(beats: list[dict]) -> str:
-    return short_hash(json.dumps([[b["text"], b["scene_ids"]] for b in beats]))
+    return short_hash(json.dumps([[b["text"], b["scene_ids"], b.get("introduce") or []] for b in beats]))
+
+
+def name_pattern(name: str) -> re.Pattern:
+    return re.compile(r"(?<!\w)" + re.escape(name) + r"(?!\w)")
+
+
+def resolve_introduce(beat: dict, number: int) -> list[dict]:
+    """introduce: ["Ren"] or [{"name": "Ren", "scene": 14}] (the scene times the card to that clip)."""
+    raw = beat.get("introduce")
+    if raw is None:
+        return []
+    out = []
+    for item in raw if isinstance(raw, list) else [raw]:
+        if isinstance(item, str):
+            name, scene = item, None
+        elif isinstance(item, dict):
+            name, scene = item.get("name"), item.get("scene")
+        else:
+            raise ToolError(f"Beat {number}: introduce entries are names or {{\"name\": ..., \"scene\": ...}}.")
+        name = " ".join(str(name or "").split())
+        if not name or len(name) > 40:
+            raise ToolError(f"Beat {number}: every introduced character needs a short name (max 40 characters).")
+        if scene is not None:
+            try:
+                scene = int(scene)
+            except (TypeError, ValueError):
+                raise ToolError(f"Beat {number}: the scene for {name}'s name card must be a scene id.")
+        out.append({"name": name, "scene": scene})
+    return out
+
+
+def name_card_plan(proj: Project, beats: list[dict]) -> dict[int, list[dict]]:
+    """Beat index -> the names shown there: each character once, the first time they are introduced.
+
+    Explicit `introduce` entries win; every other name on the project's characters list gets its
+    card in the first beat whose text mentions it.
+    """
+    plan: dict[int, list[dict]] = {}
+    shown: set[str] = set()
+    for i, beat in enumerate(beats):
+        for item in beat.get("introduce") or []:
+            if item["name"].lower() not in shown:
+                shown.add(item["name"].lower())
+                plan.setdefault(i, []).append(item)
+    for name in proj.meta.get("characters") or []:
+        if name.lower() in shown:
+            continue
+        pattern = name_pattern(name)
+        for i, beat in enumerate(beats):
+            if pattern.search(beat["text"]):
+                plan.setdefault(i, []).append({"name": name, "scene": None})
+                shown.add(name.lower())
+                break
+    return plan
 
 
 def resolve_scene_ids(proj: Project, beat: dict, number: int) -> list[int]:
@@ -131,6 +186,25 @@ def check_script(proj: Project, script: dict) -> dict:
                                 f"{len(valid)} scene(s); add about {more} more scenes (one per 3-4 spoken seconds).")
         warnings.extend(f"Beat {n} style: {issue}." for issue in style_issues(beat["text"], first=n == 1))
 
+    first_named: dict[str, int] = {}
+    for n, beat in enumerate(beats, 1):
+        for item in beat.get("introduce") or []:
+            key = item["name"].lower()
+            if key in first_named:
+                warnings.append(f"Beat {n}: {item['name']} was already introduced in beat {first_named[key]}; "
+                                "the name card shows only the first time.")
+                continue
+            first_named[key] = n
+            if not name_pattern(item["name"]).search(beat["text"]):
+                warnings.append(f"Beat {n}: the name {item['name']} is not in this beat's text, "
+                                "so its card shows near the start of the beat.")
+            if item["scene"] is not None and item["scene"] not in beat["scene_ids"]:
+                warnings.append(f"Beat {n}: scene {item['scene']} for {item['name']}'s name card is not one of this beat's scenes.")
+            earlier = next((m for m, b in enumerate(beats[:n - 1], 1) if name_pattern(item["name"]).search(b["text"])), None)
+            if earlier:
+                warnings.append(f"Beat {n}: {item['name']} is already named in beat {earlier}; introduce a character "
+                                "where the story first names them.")
+
     # Parts of the story the script walked past without showing or telling.
     run: list[dict] = []
 
@@ -168,6 +242,11 @@ def check_script(proj: Project, script: dict) -> dict:
         "next_scene": remaining[0]["id"] if remaining else None,
         "done": done,
     }
+    if load_settings()["character_names"]:
+        report["name_cards"] = [f"{item['name']} (beat {i + 1})"
+                                for i, items in sorted(name_card_plan(proj, beats).items()) for item in items]
+    else:
+        report["name_cards"] = "off (character_names is false)"
     if done:
         if total_words < 0.85 * target_words:
             warnings.append(f"Too short: {total_words} words (~{est_seconds / 60:.1f} min) for a {target:g}-minute "
@@ -223,7 +302,11 @@ def save_script(args: dict) -> dict:
         text = " ".join(str(beat.get("text") or "").split())
         if not text:
             raise ToolError(f"Beat {number} has no text.")
-        script["beats"].append({"text": text, "scene_ids": resolve_scene_ids(proj, beat, number)})
+        entry = {"text": text, "scene_ids": resolve_scene_ids(proj, beat, number)}
+        names = resolve_introduce(beat, number)
+        if names:
+            entry["introduce"] = names
+        script["beats"].append(entry)
     if args.get("target_minutes"):
         script["target_minutes"] = float(args["target_minutes"])
     proj.save_script(script)
@@ -237,7 +320,7 @@ def update_beats(args: dict) -> dict:
     beats = script["beats"]
     updates = args.get("updates")
     if not isinstance(updates, list) or not updates:
-        raise ToolError("updates must be a non-empty list of {beat, text?, scene_ids? | scene_range?, delete?}.")
+        raise ToolError("updates must be a non-empty list of {beat, text?, scene_ids? | scene_range?, introduce?, delete?}.")
     changed, deleted = [], []
     for update in updates:
         try:
@@ -254,6 +337,12 @@ def update_beats(args: dict) -> dict:
             beat["text"] = " ".join(str(update["text"]).split())
         if any(k in update for k in ("scene_ids", "scenes", "scene_range")):
             beat["scene_ids"] = resolve_scene_ids(proj, update, number)
+        if "introduce" in update:
+            names = resolve_introduce(update, number)
+            if names:
+                beat["introduce"] = names
+            else:
+                beat.pop("introduce", None)
         changed.append(number)
     for number in sorted(set(deleted), reverse=True):
         beats.pop(number - 1)

@@ -1,6 +1,6 @@
 ---
 name: animerecap
-description: Make a finished YouTube anime recap video (about 20 minutes per episode) from anime episode files, narrated in a fixed calm storyteller style, with matched clips, the original audio muted, a Fish Audio voice-over (free Edge voice for tests), a thumbnail edited from a real frame, and a title with hashtags. Use when the user types /animerecap or asks to recap anime episodes as a narrated video.
+description: Make a finished YouTube anime recap video (about 20 minutes per episode) from anime episode files, narrated in a fixed calm storyteller style in the user's cloned Fish Audio voice (free Edge voice for tests), with matched clips, the original audio muted, background music, the channel logo, character name cards, no subtitles, a thumbnail edited from a real frame, and a title with hashtags. Use when the user types /animerecap or asks to recap anime episodes as a narrated video.
 ---
 
 # animerecap
@@ -39,7 +39,38 @@ python <skill-dir>/scripts/recap.py <tool> '<json>'
 
 Run `check_setup`. If `ready` is false, tell the user exactly what to install, then stop.
 
-If `voice_provider` is `edge` (no Fish Audio key), continue but tell the user the narration will use the free test voice. If `references.sample_recap.txt` is a placeholder, continue using THE STYLE below, and tell the user to paste their reference script into `references/sample_recap.txt`.
+`checks.settings` shows the user's personal settings:
+
+- the voice: their Fish Audio API key and cloned voice
+- the channel logo
+- the background music
+- the character name cards
+
+If `voice_provider` is `edge` (no Fish Audio key), continue, but tell the user the narration will use the free test voice. If `references.sample_recap.txt` is a placeholder, continue using THE STYLE below, and tell the user to paste their reference script into `references/sample_recap.txt`.
+
+### Personal settings (any time)
+
+Whenever the user gives you any of these, save it with `configure` (it writes `config.json` in the skill folder):
+
+- a Fish Audio API key
+- their cloned voice's id
+- a channel logo
+- background music
+- a preference such as a quieter music level, or no name cards
+
+Then confirm what changed. Never repeat an API key back to the user.
+
+```json
+{"fish_api_key": "<key>", "fish_voice_id": "<cloned voice id>", "logo": "/path/logo.png", "music": "/path/music-folder", "music_volume": 0.12}
+```
+
+Settings you can save:
+
+- **`logo`**: shown at the bottom right of the whole video. Use `"none"` to turn it off.
+- **`music`**: one file, or a folder of tracks that play in turn, mixed quietly under the narration. Use `"none"` to turn it off. `music_volume` runs from 0 to 1 and is relative to the voice.
+- **`character_names`**: true or false. Controls the name cards.
+
+Users can also drop `logo.png` into `<skill-dir>/assets/` and music files into `<skill-dir>/assets/music/` without configuring anything. Running `configure` with no arguments shows the current settings, with the API key masked.
 
 ### 2. Inspect every episode
 
@@ -110,6 +141,8 @@ Payload example (`payloads/desc_0021.json`):
 
 These notes are your memory while you write the script.
 
+Also save the character names: `save_notes {"project_id": "...", "characters": ["Ren", "Mira", "Captain Hol"]}`. Write each name exactly as the narration will spell it. The first time the script mentions a name, the video shows it in bold white letters at the bottom right for about 3 seconds. That is the character's introduction.
+
 ### 8. Write the script
 
 Write in chunks of about 8 beats. A beat is 60-100 words of narration, plus the scenes to show while it is spoken.
@@ -119,6 +152,7 @@ Write in chunks of about 8 beats. A beat is 60-100 words of narration, plus the 
 - Each beat needs `text`, plus either `scene_ids` (a list) or `scene_range` (`[first, last]`). Credits and cut scenes inside a range are left out automatically.
 - After every save, read `warnings` and fix them (use `update_beats` for single beats). Use `projected_words` and `progress` to pace yourself towards `target_words`. Continue from `next_scene`.
 - After the first chunk, check accuracy. Run `get_scenes_text` for the scenes of beats 1-3, and compare every claim against the descriptions and dialogue. Fix anything those don't show.
+- **Name cards.** Names on the `characters` list get their card automatically at their first mention. To control one, add `"introduce"` to the beat that introduces the character. `"introduce": [{"name": "Mira", "scene": 41}]` shows the card when scene 41's clip plays, so choose the scene that shows that character. Introduce each character only once, in the beat that first names them, and use exactly the spelling used in the text. Each save report lists `name_cards`, so check it.
 - The script is finished when `done` is true and there are no warnings left that you can fix. The last beat must end with the exact closing lines (see THE STYLE).
 
 Payload example (`payloads/beats_01.json`):
@@ -142,7 +176,15 @@ Compare `video_minutes_estimate` with `target_minutes`. If they differ by more t
 
 ### 11. Render
 
-`render_video {"project_id": "..."}` produces `output/recap.mp4`: 1920x1080, the original audio muted, the narration added, and `output/timeline.json` with the real timestamps.
+`render_video {"project_id": "..."}` produces `output/recap.mp4`, plus `output/timeline.json` with the real timestamps. The video is:
+
+- 1920x1080, with the original audio muted and the narration added
+- the user's background music mixed quietly under the voice
+- their channel logo at the bottom right
+- each character's name in bold white letters at the bottom right (above the logo) when they are introduced
+- no subtitles or captions of any kind
+
+The settings decide the logo and music. For a one-off change, pass `"music": "none"`, `"music_volume": 0.08`, `"logo": "none"` or `"character_names": false` to `render_video`.
 
 ### 12. Check the clips
 
@@ -151,6 +193,7 @@ Run `get_preview_sheet` with `first_beat` 1, 9, 17, and so on. Open each IMAGE.
 - Every row is one beat: its words on the left, and the clips it shows (`#scene` and seconds) on the right. The JSON lists each clip's description.
 - Fix every beat whose pictures do not match its words: wrong character, wrong moment, or an event shown before it is narrated. Use `update_beats {"project_id": "...", "updates": [{"beat": 7, "scene_ids": [40, 41, 44]}]}`.
 - A red `HOLD` tag means the beat ran out of footage. Give it more scenes.
+- A blue `NAME:` tag shows which character's name card appears in that beat. Check that the beat's pictures show that character.
 - Then run `render_video` again. Only the changed beats are re-encoded.
 
 ### 13. Make the thumbnail
@@ -192,6 +235,7 @@ Tell the user:
 - the thumbnail path and `output/publish.txt`
 - the script files (`output/script.txt` and `output/script_table.md`)
 - which voice was used
+- whether the logo, background music and name cards were used, and which names appear
 
 Then remind them that the clips are copyrighted footage owned by the studio or licensor. Uploading the recap can bring Content ID claims or strikes, and checking fair use and permissions is their responsibility.
 
@@ -284,3 +328,6 @@ Here is an invented example of the voice, for illustration only. The reference f
 - **Fish Audio 401:** check `FISH_API_KEY`. **402:** the account is out of credits. **Other errors:** check `FISH_VOICE_ID` and `FISH_MODEL`. For a free test run, use `"provider": "edge"`.
 - **A wrong clip after rendering:** `update_beats`, then `render_video` again.
 - **A wrong scene description:** `save_descriptions` again for that id. The newest one wins.
+- **The logo or music is "missing" in the render result:** the configured path moved. Run `configure` with the new path, or `"none"`.
+- **The music is too loud or too quiet:** `configure {"music_volume": 0.08}` (or 0.18), then run `render_video` again. Only the final mix is redone.
+- **A wrong or missing name card:** fix the `characters` list (`save_notes`) or the beat's `introduce` (`update_beats`), then run `render_video` again.
