@@ -1,0 +1,4 @@
+PLACEHOLDER: replace this whole file with your style reference recap script (plain text).
+
+The AI reads this file before writing every script and copies its voice exactly. Until you paste
+your script here, it follows the rules in the "THE STYLE" section of SKILL.md.
